@@ -58,17 +58,21 @@ int print_caps(int fd)
                 cropcap.bounds.width, cropcap.bounds.height, cropcap.bounds.left, cropcap.bounds.top,
                 cropcap.defrect.width, cropcap.defrect.height, cropcap.defrect.left, cropcap.defrect.top,
                 cropcap.pixelaspect.numerator, cropcap.pixelaspect.denominator);
-
+        /*
         int support_grbg10 = 0;
 
         struct v4l2_fmtdesc fmtdesc = {0};
         fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        */
         char fourcc[5] = {0};
+        /*
         char c, e;
         printf("  FMT : CE Desc\n--------------------\n");
         while (0 == xioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc))
         {
+                printf("VIDIOC_ENUM_FMT.\n");
                 strncpy(fourcc, (char *)&fmtdesc.pixelformat, 4);
+                printf("pixelformat:%x\n", fmtdesc.pixelformat);
                 if (fmtdesc.pixelformat == V4L2_PIX_FMT_SGRBG10)
                     support_grbg10 = 1;
                 c = fmtdesc.flags & 1? 'C' : ' ';
@@ -82,12 +86,13 @@ int print_caps(int fd)
             printf("Doesn't support GRBG10.\n");
             return 1;
         }
-
+        */
         struct v4l2_format fmt = {0};
         fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        fmt.fmt.pix.width = 752;
+        fmt.fmt.pix.width = 640;
         fmt.fmt.pix.height = 480;
-        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_SGRBG10;
+        //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_SGRBG10;
+        fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
         fmt.fmt.pix.field = V4L2_FIELD_NONE;
 
         if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
@@ -110,7 +115,8 @@ int print_caps(int fd)
 }
 
 int init_mmap(int fd)
-{
+{      
+    
     struct v4l2_requestbuffers req = {0};
     req.count = 1;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -121,7 +127,8 @@ int init_mmap(int fd)
         perror("Requesting Buffer");
         return 1;
     }
-
+    
+    
     struct v4l2_buffer buf = {0};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
@@ -131,9 +138,9 @@ int init_mmap(int fd)
         perror("Querying Buffer");
         return 1;
     }
-
+    
     buffer = mmap (NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset);
-    printf("Length: %d\nAddress: %p\n", buf.length, buffer);
+    printf("Length: %d, Address: %p\n", buf.length, buffer);
     printf("Image Length: %d\n", buf.bytesused);
 
     return 0;
@@ -145,6 +152,8 @@ int capture_image(int fd)
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index = 0;
+
+    printf("capture_image\n");
     if(-1 == xioctl(fd, VIDIOC_QBUF, &buf))
     {
         perror("Query Buffer");
@@ -163,6 +172,7 @@ int capture_image(int fd)
     struct timeval tv = {0};
     tv.tv_sec = 2;
     int r = select(fd+1, &fds, NULL, NULL, &tv);
+    printf("r:%d\n", r);
     if(-1 == r)
     {
         perror("Waiting for Frame");
@@ -175,11 +185,33 @@ int capture_image(int fd)
         return 1;
     }
 
-    int outfd = open("out.img", O_RDWR);
+    int outfd = open("out.img", O_RDWR|O_EXCL);
+    printf("outfd:%d\n", outfd);
     write(outfd, buffer, buf.bytesused);
     close(outfd);
 
     return 0;
+}
+
+int check_input_output(int fd)
+{
+    struct v4l2_input input;
+    int index;
+    
+    if (-1 == ioctl (fd, VIDIOC_G_INPUT, &index)) {
+      perror ("VIDIOC_G_INPUT");
+      return -1;
+    }
+    
+    memset (&input, 0, sizeof(input));
+    input.index = index;
+    
+    if (-1 == ioctl (fd, VIDIOC_ENUMINPUT, &input)) {
+      perror ("VIDIOC_ENUMINPUT");
+      return -1;
+    }
+    
+    printf ("Current input: %s\n", input.name);
 }
 
 int main()
@@ -187,6 +219,7 @@ int main()
         int fd;
 
         fd = open("/dev/video0", O_RDWR);
+        printf("fd:%d\n", fd);
         if (fd == -1)
         {
                 perror("Opening video device");
@@ -196,11 +229,15 @@ int main()
 	printf("print_cap()\n");
         if(print_caps(fd))
             return 1;
-
+        
+        check_input_output(fd);
+        
 	printf("print_mmap()\n");
         if(init_mmap(fd))
             return 1;
 
+        check_input_output(fd);        
+        
 	printf("print_image()\n");
         if(capture_image(fd))
             return 1;
