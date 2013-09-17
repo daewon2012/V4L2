@@ -25,7 +25,7 @@ int print_caps(int fd)
         struct v4l2_capability caps = {};
         if (-1 == xioctl(fd, VIDIOC_QUERYCAP, &caps))
         {
-                perror("Querying Capabilities");
+                perror("Querying Capabilities\n");
                 return 1;
         }
 
@@ -41,13 +41,16 @@ int print_caps(int fd)
                 (caps.version>>16)&&0xff,
                 (caps.version>>24)&&0xff,
                 caps.capabilities);
-
+        
+        if (!(caps.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
+            printf("no video capture device\n");
+        }
 
         struct v4l2_cropcap cropcap = {0};
         cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (-1 == xioctl (fd, VIDIOC_CROPCAP, &cropcap))
         {
-                perror("Querying Cropping Capabilities");
+                perror("Querying Cropping Capabilities\n");
                 return 1;
         }
 
@@ -58,14 +61,14 @@ int print_caps(int fd)
                 cropcap.bounds.width, cropcap.bounds.height, cropcap.bounds.left, cropcap.bounds.top,
                 cropcap.defrect.width, cropcap.defrect.height, cropcap.defrect.left, cropcap.defrect.top,
                 cropcap.pixelaspect.numerator, cropcap.pixelaspect.denominator);
-        /*
+        
         int support_grbg10 = 0;
 
         struct v4l2_fmtdesc fmtdesc = {0};
         fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        */
+        
         char fourcc[5] = {0};
-        /*
+        
         char c, e;
         printf("  FMT : CE Desc\n--------------------\n");
         while (0 == xioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc))
@@ -84,20 +87,21 @@ int print_caps(int fd)
         if (!support_grbg10)
         {
             printf("Doesn't support GRBG10.\n");
-            return 1;
+            //return 1;
         }
-        */
+        
         struct v4l2_format fmt = {0};
         fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        fmt.fmt.pix.width = 640;
-        fmt.fmt.pix.height = 480;
+        fmt.fmt.pix.width = 160;
+        fmt.fmt.pix.height = 120;
         //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_SGRBG10;
         fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-        fmt.fmt.pix.field = V4L2_FIELD_NONE;
+        fmt.fmt.pix.field = V4L2_FIELD_INTERLACED;
 
-        if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
+        /* Change VIDIOC_G_FMT to VIDIOC_S_FMT */ 
+        if (-1 == xioctl(fd, VIDIOC_G_FMT, &fmt))
         {
-            perror("Setting Pixel Format");
+            perror("Error Setting Pixel Format\n");
             return 1;
         }
 
@@ -124,18 +128,17 @@ int init_mmap(int fd)
 
     if (-1 == xioctl(fd, VIDIOC_REQBUFS, &req))
     {
-        perror("Requesting Buffer");
+        perror("Error Requesting Buffer");
         return 1;
     }
-    
     
     struct v4l2_buffer buf = {0};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index = 0;
-    if(-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
+    if (-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
     {
-        perror("Querying Buffer");
+        perror("Error Querying Buffer");
         return 1;
     }
     
@@ -154,15 +157,16 @@ int capture_image(int fd)
     buf.index = 0;
 
     printf("capture_image\n");
+    /*
     if(-1 == xioctl(fd, VIDIOC_QBUF, &buf))
     {
-        perror("Query Buffer");
+        perror("Error Query Buffer");
         return 1;
     }
-
+    */
     if(-1 == xioctl(fd, VIDIOC_STREAMON, &buf.type))
     {
-        perror("Start Capture");
+        perror("Error Start Capture");
         return 1;
     }
 
@@ -175,13 +179,13 @@ int capture_image(int fd)
     printf("r:%d\n", r);
     if(-1 == r)
     {
-        perror("Waiting for Frame");
+        perror("Error Waiting for Frame");
         return 1;
     }
 
     if(-1 == xioctl(fd, VIDIOC_DQBUF, &buf))
     {
-        perror("Retrieving Frame");
+        perror("Error Retrieving Frame");
         return 1;
     }
 
@@ -199,7 +203,7 @@ int check_input_output(int fd)
     int index;
     
     if (-1 == ioctl (fd, VIDIOC_G_INPUT, &index)) {
-      perror ("VIDIOC_G_INPUT");
+      perror ("Error VIDIOC_G_INPUT");
       return -1;
     }
     
@@ -207,7 +211,7 @@ int check_input_output(int fd)
     input.index = index;
     
     if (-1 == ioctl (fd, VIDIOC_ENUMINPUT, &input)) {
-      perror ("VIDIOC_ENUMINPUT");
+      perror ("Error VIDIOC_ENUMINPUT");
       return -1;
     }
     
@@ -218,7 +222,7 @@ int main()
 {
         int fd;
 
-        fd = open("/dev/video0", O_RDWR);
+        fd = open("/dev/video0", O_RDWR|O_NONBLOCK, 0);
         printf("fd:%d\n", fd);
         if (fd == -1)
         {
