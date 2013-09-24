@@ -1,16 +1,19 @@
-KERNELDIR = /lib/modules/$(shell uname -r)/build
+CC = gcc
+LD = ld
+OBJS = camera.o
+#OBJS = vce.o
+TARGET = MyCamera
+#CFLAGS = -O2 -Wall -Werror -fomit-frame-pointer -c
+#LDFLAGS = -lc
 
-obj-m := hello.o
+.SUFFIXES : .c .o
 
-KDIR := /lib/modules/$(shell uname -r)/build
-PWD := $(shell pwd)
+.PHONY: all clean
 
-default:
-      $(MAKE) -C $(KDIR) SUBDIRS=$(PWD) modules
+all : $(TARGET)
 
-clean:
-      rm -rf *.ko
-      rm -rf *.mod.*
-      rm -rf .*.cmd
-      rm -rf *.o
-      rm -rf .tmp_versions
+$(TARGET): $(OBJS)
+	$(CC) -o $@ $(OBJS)
+
+clean :
+	rm -f $(OBJS) $(TARGET)
