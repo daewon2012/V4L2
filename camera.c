@@ -7,8 +7,19 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <jpeglib.h>
+#include <errno.h>
+
+
 
 uint8_t *buffer;
+struct {
+  void *start;
+  size_t length;
+} *buffers;
+
+struct v4l2_requestbuffers req;
+    
 
 static int xioctl(int fd, int request, void *arg)
 {
@@ -19,6 +30,47 @@ static int xioctl(int fd, int request, void *arg)
 
         return r;
 }
+
+/**
+  Convert from YUV422 format to RGB888. Formulae are described on http://en.wikipedia.org/wiki/YUV
+
+  \param width width of image
+  \param height height of image
+  \param src source
+  \param dst destination
+*/
+static void YUV422toRGB888(int width, int height, unsigned char *src, unsigned char *dst)
+{
+  int line, column;
+  unsigned char *py, *pu, *pv;
+  unsigned char *tmp = dst;
+
+  /* In this format each four bytes is two pixels. Each four bytes is two Y's, a Cb and a Cr. 
+     Each Y goes to one of the pixels, and the Cb and Cr belong to both pixels. */
+  py = src;
+  pu = src + 1;
+  pv = src + 3;
+
+  #define CLIP(x) ( (x)>=0xFF ? 0xFF : ( (x) <= 0x00 ? 0x00 : (x) ) )
+
+  for (line = 0; line < height; ++line) {
+    for (column = 0; column < width; ++column) {
+      *tmp++ = CLIP((double)*py + 1.402*((double)*pv-128.0));
+      *tmp++ = CLIP((double)*py - 0.344*((double)*pu-128.0) - 0.714*((double)*pv-128.0));      
+      *tmp++ = CLIP((double)*py + 1.772*((double)*pu-128.0));
+
+      // increase py every time
+      py += 2;
+      // increase pu,pv every second time
+      if ((column & 1)==1) {
+        pu += 4;
+        pv += 4;
+      }
+    }
+  }
+}
+
+
 
 int print_caps(int fd)
 {
@@ -93,7 +145,7 @@ int print_caps(int fd)
         fmt.fmt.pix.height = 480;
         //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_SGRBG10;
         fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-        fmt.fmt.pix.field = V4L2_FIELD_NONE;
+        fmt.fmt.pix.field = V4L2_FIELD_INTERLACED;
 
         if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
         {
@@ -116,35 +168,57 @@ int print_caps(int fd)
 
 int init_mmap(int fd)
 {      
+    unsigned int i;
     
-    struct v4l2_requestbuffers req = {0};
-    req.count = 1;
+    memset(&req, 0, sizeof(req));
+    req.count = 20;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
 
-    if (-1 == xioctl(fd, VIDIOC_REQBUFS, &req))
-    {
-        perror("Requesting Buffer");
+    if (-1 == xioctl(fd, VIDIOC_REQBUFS, &req)) {
+        if (errno == EINVAL)
+          printf("Video capturing or mmap-streaming is not suppported.\n");
+        else
+          perror("Requesting Buffer");
         return 1;
     }
     
-    
-    struct v4l2_buffer buf = {0};
-    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buf.memory = V4L2_MEMORY_MMAP;
-    buf.index = 0;
-    if(-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
-    {
-        perror("Querying Buffer");
-        return 1;
+    if (req.count < 5) {
+      printf("Not enough buffer memory.\n");
+      return 1;
     }
     
-    buffer = mmap (NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset);
-    printf("Length: %d, Address: %p\n", buf.length, buffer);
-    printf("Image Length: %d\n", buf.bytesused);
-
+    buffers = calloc(req.count, sizeof (*buffers));
+    i = 0;
+    //for (i = 0; i < req.count; i++) {
+      struct v4l2_buffer buffer;
+      
+      memset(&buffer, 0, sizeof(buffer));
+      buffer.type = req.type;
+      buffer.memory = V4L2_MEMORY_MMAP;
+      buffer.index = i;
+      
+      if (-1 == ioctl(fd, VIDIOC_QUERYBUF, &buffer)) {
+        perror("VIDIOC_QUERYBUF");
+        return 1;
+      }
+      
+      buffers[i].length = buffer.length;
+      printf("start:%p\n", buffers[i].start);
+      buffers[i].start = mmap(NULL, buffer.length,
+                              PROT_READ | PROT_WRITE,
+                              MAP_SHARED,
+                              fd, buffer.m.offset);
+      printf("start:%p\n", buffers[i].start);      
+      if (MAP_FAILED == buffers[i].start) {
+        perror("mmap");
+        return 1;
+      }
+    //}
     return 0;
 }
+
+static void imageProcess(const void* p);
 
 int capture_image(int fd)
 {
@@ -185,11 +259,16 @@ int capture_image(int fd)
         return 1;
     }
 
+    /*
     int outfd = open("out.img", O_RDWR|O_EXCL);
-    printf("outfd:%d\n", outfd);
-    write(outfd, buffer, buf.bytesused);
+    printf("start:%p\n", buffers[0].start);
+    printf("outfd:%d, bytesused:%d\n", outfd, buf.bytesused);
+    write(outfd, buffers[0].start, buf.bytesused);
     close(outfd);
-
+    */
+    
+    imageProcess(buffers[0].start);
+    
     return 0;
 }
 
@@ -214,34 +293,115 @@ int check_input_output(int fd)
     printf ("Current input: %s\n", input.name);
 }
 
+// global settings
+static unsigned int width = 640;
+static unsigned int height = 480;
+static unsigned char jpegQuality = 70;
+static char* jpegFilename = "camera.jpeg";
+static char* deviceName = "/dev/video0";
+
+
+/**
+  Write image to jpeg file.
+
+  \param img image to write
+*/
+static void jpegWrite(unsigned char* img)
+{
+  struct jpeg_compress_struct cinfo;
+  struct jpeg_error_mgr jerr;
+        
+  JSAMPROW row_pointer[1];
+  FILE *outfile = fopen( jpegFilename, "wb" );
+
+  // try to open file for saving
+  if (!outfile) {
+    return;//errno_exit("jpeg");
+  }
+
+  // create jpeg data
+  cinfo.err = jpeg_std_error( &jerr );
+  jpeg_create_compress(&cinfo);
+  jpeg_stdio_dest(&cinfo, outfile);
+
+  // set image parameters
+  cinfo.image_width = width;    
+  cinfo.image_height = height;
+  cinfo.input_components = 3;
+  cinfo.in_color_space = JCS_RGB;
+
+  // set jpeg compression parameters to default
+  jpeg_set_defaults(&cinfo);
+  // and then adjust quality setting
+  jpeg_set_quality(&cinfo, jpegQuality, TRUE);
+
+  // start compress 
+  jpeg_start_compress(&cinfo, TRUE);
+
+  // feed data
+  while (cinfo.next_scanline < cinfo.image_height) {
+    row_pointer[0] = &img[cinfo.next_scanline * cinfo.image_width *  cinfo.input_components];
+    jpeg_write_scanlines(&cinfo, row_pointer, 1);
+  }
+
+  // finish compression
+  jpeg_finish_compress(&cinfo);
+
+  // destroy jpeg data
+  jpeg_destroy_compress(&cinfo);
+
+  // close output file
+  fclose(outfile);
+}
+
+/**
+  process image read
+*/
+static void imageProcess(const void* p)
+{
+  unsigned char* src = (unsigned char*)p;
+  unsigned char* dst = malloc(width*height*3*sizeof(char));
+
+  // convert from YUV422 to RGB888
+  YUV422toRGB888(width,height,src,dst);
+
+  // write jpeg
+  jpegWrite(dst);
+}
+
+
 int main()
 {
-        int fd;
+    int fd;
+    int i;
 
-        fd = open("/dev/video0", O_RDWR);
-        printf("fd:%d\n", fd);
-        if (fd == -1)
-        {
-                perror("Opening video device");
-                return 1;
-        }
-
-	printf("print_cap()\n");
-        if(print_caps(fd))
+    fd = open("/dev/video0", O_RDWR);
+    printf("fd:%d\n", fd);
+    if (fd == -1)
+    {
+            perror("Opening video device");
             return 1;
-        
-        check_input_output(fd);
-        
-	printf("print_mmap()\n");
-        if(init_mmap(fd))
-            return 1;
+    }
 
-        check_input_output(fd);        
-        
-	printf("print_image()\n");
-        if(capture_image(fd))
-            return 1;
+    printf("print_cap()\n");
+    if(print_caps(fd))
+        return 1;
+    
+    check_input_output(fd);
+    
+    printf("print_mmap()\n");
+    if(init_mmap(fd))
+        return 1;
 
-        close(fd);
-        return 0;
+    check_input_output(fd);        
+    
+    printf("print_image()\n");
+    if(capture_image(fd))
+        return 1;
+
+    for (i = 0; i < req.count; i++) {
+      munmap(buffers[i].start, buffers[i].length);
+    }
+    close(fd);
+    return 0;
 }
