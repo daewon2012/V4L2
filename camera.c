@@ -77,7 +77,7 @@ int print_caps(int fd)
         struct v4l2_capability caps = {};
         if (-1 == xioctl(fd, VIDIOC_QUERYCAP, &caps))
         {
-                perror("Querying Capabilities");
+                perror("Querying Capabilities\n");
                 return 1;
         }
 
@@ -99,7 +99,7 @@ int print_caps(int fd)
         cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if (-1 == xioctl (fd, VIDIOC_CROPCAP, &cropcap))
         {
-                perror("Querying Cropping Capabilities");
+                perror("Querying Cropping Capabilities\n");
                 return 1;
         }
 
