@@ -291,6 +291,7 @@ int check_input_output(int fd)
     }
     
     printf ("Current input: %s\n", input.name);
+    return 0;
 }
 
 // global settings
@@ -298,7 +299,7 @@ static unsigned int width = 640;
 static unsigned int height = 480;
 static unsigned char jpegQuality = 70;
 static char* jpegFilename = "camera.jpeg";
-static char* deviceName = "/dev/video0";
+//static char* deviceName = "/dev/video0";
 
 
 /**

@@ -3,17 +3,18 @@ LD = ld
 OBJS = camera.o
 #OBJS = vce.o
 TARGET = MyCamera
-#CFLAGS = -O2 -Wall -Werror -fomit-frame-pointer -c
-#LDFLAGS = -lc
-
-.SUFFIXES : .c .o
+CFLAGS = -O2 -Wall -c
+LDFLAGS = -ljpeg
 
 .PHONY: all clean
 
 all : $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CC) -o $@ $(OBJS)
-
 clean :
 	rm -f $(OBJS) $(TARGET)
+
+$(TARGET): $(OBJS)
+	$(CC) -o $@ $^ -ljpeg
+
+.c.o :
+	$(CC) $(CFLAGS) -o $@ $<
